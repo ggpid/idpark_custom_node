@@ -4,7 +4,7 @@ import numpy as np
 import torch
 import comfy
 from PIL import Image
-from tools import run_length_decode, run_length_encode
+from tools import run_length_encode
 
 
 class SAMGenerator:
