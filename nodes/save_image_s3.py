@@ -13,66 +13,67 @@ S3_INSTANCE = get_s3_instance()
 
 class SaveImageS3:
     def __init__(self):
-        base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
-        self.temp_dir = os.path.join(base_dir, "temp/")
         self.s3_output_dir = os.getenv("S3_OUTPUT_DIR")
         self.type = "output"
-        self.prefix_append = ""
         self.compress_level = 4
 
     @classmethod
     def INPUT_TYPES(s):
-        return {"required": {
-            "images": ("IMAGE", ),
-            "filename_prefix": ("STRING", {"default": "Image"})},
-            "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO"
+        return {
+            "required": {
+                "images": ("IMAGE", ),
+                "object_id": ("STRING", {"default": "${prompt_id}"})
             },
-                }
+        }
 
     RETURN_TYPES = ()
     FUNCTION = "save_images"
     OUTPUT_NODE = True
     CATEGORY = "CODEWAVE"
 
-    def save_images(self, images, folder="output", prompt=None, extra_pnginfo=None):
+    def save_and_upload_image(self, image, object_id, index, format="PNG", quality=80):
+        """
+        이미지를 주어진 형식으로 저장하고 S3에 업로드하는 함수.
+        """
+        # 파일 확장자 및 저장 옵션 설정
+        if format.upper() == "WEBP":
+            filename = f"{index}.webp"
+            save_args = {"format": format, "quality": quality}
+        else:  # Default to PNG
+            filename = f"{index}.png"
+            save_args = {"format": "PNG", "compress_level": self.compress_level}
+
+        # 임시 파일 생성 및 이미지 저장
+        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{format.lower()}") as temp_file:
+            temp_file_path = temp_file.name
+            image.save(temp_file_path, **save_args)
+
+            # S3에 파일 업로드
+            s3_path = f'{self.s3_output_dir}/{object_id}/{filename}'
+            S3_INSTANCE.upload_file(temp_file_path, s3_path)
+
+        # 임시 파일 삭제
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.remove(temp_file_path)
+
+        return s3_path
+
+
+    def save_images(self, images, object_id):
         results = list()
 
-        for i, image in enumerate(images):
+        for index, image in enumerate(images):
             i = 255. * image.cpu().numpy()
             img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-            metadata = None
-            if not args.disable_metadata:
-                metadata = PngInfo()
-                if prompt is not None:
-                    metadata.add_text("prompt", json.dumps(prompt))
-                if extra_pnginfo is not None:
-                    for x in extra_pnginfo:
-                        metadata.add_text(x, json.dumps(extra_pnginfo[x]))
-            
-            # file = f"{filename}_{counter:05}_.png"
-            file = f"{uuid.uuid4()}_{i}.png"
-            temp_file = None
-            try:
-                # Create a temporary file
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".png") as temp_file:
-                    temp_file_path = temp_file.name
-                    
-                    # Save the image to the temporary file
-                    img.save(temp_file_path, pnginfo=metadata, compress_level=self.compress_level)
 
-                    # Upload the temporary file to S3
-                    # s3_path = os.path.join(full_output_folder, file)
-                    s3_path = os.path.join(folder, file)
-                    S3_INSTANCE.upload_file(temp_file_path, s3_path)
+            # PNG 형식으로 저장 및 업로드
+            png_s3_path = self.save_and_upload_image(img, object_id, index, format="PNG")
+            results.append(png_s3_path)
 
-                    # Add the result to the results list
-                    results.append({
-                        "url": s3_path,
-                    })
+            # WEBP 형식으로 저장 및 업로드
+            webp_s3_path = self.save_and_upload_image(img, object_id, index, format="WEBP", quality=80)
+            # results.append(webp_s3_path)
 
-            finally:
-                # Delete the temporary file
-                if temp_file_path and os.path.exists(temp_file_path):
-                    os.remove(temp_file_path)
+        return { "ui": { "image_urls": results } }
 
-        return { "ui": { "images": results } }
+
