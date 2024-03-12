@@ -1,6 +1,7 @@
 import folder_paths
 from fastsam import FastSAM
 from PIL import Image
+import numpy as np
 from ..tools import run_length_encode, resize_mask, resize_mask_centered
 import os
 
@@ -14,8 +15,9 @@ class FastSAMGenerator:
         input_dir = folder_paths.get_input_directory()
         files = [f for f in os.listdir(input_dir) if os.path.isfile(os.path.join(input_dir, f))]
         return {
-            "required":
-                {"image": (sorted(files), {"image_upload": True})},
+            "required": {
+                "images": ("IMAGE", ),
+            },
         }
 
     RETURN_TYPES = ()
@@ -27,9 +29,10 @@ class FastSAMGenerator:
 
     CATEGORY = "CODEWAVE"
 
-    def doIt(self, image):
-        image_path = folder_paths.get_annotated_filepath(image)
-        input = Image.open(image_path)
+    def doIt(self, images):
+        image = images[0]
+        i = 255. * image.cpu().numpy()
+        input = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
         input = input.convert("RGB")
         fastsam_model = FastSAM('./FastSAM-x.pt')
         everything_results = fastsam_model(
